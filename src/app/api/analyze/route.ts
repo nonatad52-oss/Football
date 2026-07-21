@@ -44,7 +44,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Falta a chave GROQ_API_KEY nas variáveis de ambiente da Vercel.' });
     }
 
-    // Inicializa o Groq apenas se a chave existir
     const groq = new Groq({ apiKey: groqApiKey });
     const liga = campeonato || 'Futebol';
 
@@ -68,16 +67,16 @@ export async function POST(req: Request) {
       4. Placar Exato Mais Provável
     `;
 
-    // 4. CHAMADA DA IA
+    // 4. CHAMADA DA IA (MODELO ATUALIZADO AQUI 👇)
     const chatCompletion = await groq.chat.completions.create({
       messages: [{ role: 'user', content: prompt }],
-      model: 'llama3-8b-8192',
+      model: 'llama-3.1-8b-instant', // Modelo atualizado e suportado
       temperature: 0.3,
     });
 
     const analiseFinal = chatCompletion.choices[0]?.message?.content || "A IA não conseguiu gerar a análise.";
 
-    // 5. TENTATIVA DE SALVAR NO BANCO (NÃO TRAVA SE FALHAR)
+    // 5. TENTATIVA DE SALVAR NO BANCO
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     
@@ -88,7 +87,7 @@ export async function POST(req: Request) {
           { mandante, visitante, campeonato: liga, resultado_ia: analiseFinal }
         ]);
       } catch (dbError) {
-        console.log("Aviso: Falha ao salvar no banco, mas a análise será exibida.", dbError);
+        console.log("Aviso: Falha ao salvar no banco, mas a análise será exibida.");
       }
     }
 
