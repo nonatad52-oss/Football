@@ -1,156 +1,231 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
-export default function FootballAnalystDashboard() {
-  const [formData, setFormData] = useState({
-    homeTeam: '',
-    awayTeam: '',
-    league: '',
-    homeStats: '',
-    awayStats: '',
-    odds: '1.85'
-  });
+interface AnalysisResult {
+  matchId: string;
+  prediction: string;
+  oddSuggested?: string;
+  confidence: number;
+  justification: string;
+}
 
+export default function Home() {
+  // Estados do Formulário
+  const [homeTeam, setHomeTeam] = useState('');
+  const [awayTeam, setAwayTeam] = useState('');
+  const [league, setLeague] = useState('');
+  const [statsNotes, setStatsNotes] = useState('');
+
+  // Estados de Controle e Resultado
   const [loading, setLoading] = useState(false);
-  const [currentAnalysis, setCurrentAnalysis] = useState<any>(null);
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
-  const handleAnalyze = async (e: React.FormEvent) => {
+  // Submeter dados para análise da IA
+  async function handleAnalyze(e: React.FormEvent) {
     e.preventDefault();
+    if (!homeTeam || !awayTeam) return;
+
     setLoading(true);
-    setCurrentAnalysis(null);
+    setAnalysis(null);
+    setStatusMessage(null);
 
     try {
-      const res = await fetch('/api/analyze', {
+      const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({
+          homeTeam,
+          awayTeam,
+          league,
+          statsNotes,
+        }),
       });
-      const data = await res.json();
-      if (data.success) {
-        setCurrentAnalysis(data);
-      } else {
-        alert('Erro: ' + data.error);
-      }
-    } catch (err) {
-      alert('Falha ao gerar análise.');
+
+      const data = await response.json();
+
+      if (!response.ok) throw new Error(data.error || 'Erro ao analisar partida.');
+
+      setAnalysis(data);
+    } catch (err: any) {
+      setStatusMessage(`❌ Erro: ${err.message}`);
     } finally {
       setLoading(false);
     }
-  };
+  }
+
+  // Registrar se deu Green ou Red
+  async function handleFeedback(outcome: 'GREEN' | 'RED') {
+    if (!analysis?.matchId) return;
+
+    try {
+      const response = await fetch('/api/result', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          matchId: analysis.matchId,
+          outcome,
+        }),
+      });
+
+      if (!response.ok) throw new Error('Erro ao salvar resultado.');
+
+      setStatusMessage(
+        outcome === 'GREEN' 
+          ? '✅ Resultado salvo como GREEN! Aprendizado registrado.' 
+          : '🔴 Resultado salvo como RED! A IA vai usar essa falha para ajustar análises futuras.'
+      );
+      setAnalysis(null); // Limpa para a próxima análise
+    } catch (err: any) {
+      setStatusMessage(`❌ Erro: ${err.message}`);
+    }
+  }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-8 font-sans">
-      <div className="max-w-5xl mx-auto space-y-8">
-        
-        {/* Cabeçalho */}
-        <header className="border-b border-slate-800 pb-4">
-          <h1 className="text-3xl font-bold text-emerald-400">⚽ IA Analyst - Bet Memory</h1>
-          <p className="text-slate-400">Sistema de Análise Preditiva de Futebol com Aprendizado Contínuo</p>
-        </header>
+    <main className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-8 max-w-4xl mx-auto">
+      {/* Header */}
+      <header className="mb-8 text-center md:text-left">
+        <h1 className="text-3xl font-extrabold text-emerald-400">
+          ⚽ PredictAI Football
+        </h1>
+        <p className="text-slate-400 text-sm mt-1">
+          Análise preditiva automatizada com aprendizado contínuo.
+        </p>
+      </header>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          
-          {/* Formulário de Análise */}
-          <section className="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4">
-            <h2 className="text-xl font-semibold text-slate-200">Nova Análise de Partida</h2>
-            <form onSubmit={handleAnalyze} className="space-y-4">
+      <div className="grid grid-cols-1 gap-8">
+        {/* Formulário de Análise */}
+        <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <h2 className="text-xl font-bold mb-4 text-slate-200">
+            Nova Análise de Partida
+          </h2>
+
+          <form onSubmit={handleAnalyze} className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-slate-400 mb-1">Liga / Campeonato</label>
-                <input 
-                  type="text" 
-                  placeholder="Ex: Brasileirão Série A"
-                  className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-slate-100"
-                  value={formData.league}
-                  onChange={e => setFormData({...formData, league: e.target.value})}
+                <label className="block text-xs font-semibold text-slate-400 mb-1">
+                  Time Mandante *
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Flamengo"
+                  value={homeTeam}
+                  onChange={(e) => setHomeTeam(e.target.value)}
                   required
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-sm focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">
+                  Time Visitante *
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ex: Palmeiras"
+                  value={awayTeam}
+                  onChange={(e) => setAwayTeam(e.target.value)}
+                  required
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-sm focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 mb-1">
+                Campeonato / Liga
+              </label>
+              <input
+                type="text"
+                placeholder="Ex: Brasileirão Série A"
+                value={league}
+                onChange={(e) => setLeague(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-sm focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-400 mb-1">
+                Estatísticas & Notas (Últimos jogos, desfalques, etc.)
+              </label>
+              <textarea
+                rows={4}
+                placeholder="Ex: Mandante vem de 3 vitórias seguidas. Visitante sem o atacante principal..."
+                value={statsNotes}
+                onChange={(e) => setStatsNotes(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2.5 text-sm focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg transition-colors duration-200 disabled:opacity-50"
+            >
+              {loading ? '🤖 Analisando com Groq IA...' : 'Gerar Prognóstico'}
+            </button>
+          </form>
+        </section>
+
+        {/* Mensagens de Feedback */}
+        {statusMessage && (
+          <div className="p-4 rounded-lg bg-slate-800 border border-slate-700 text-sm font-medium">
+            {statusMessage}
+          </div>
+        )}
+
+        {/* Card de Análise Gerada */}
+        {analysis && (
+          <section className="bg-slate-900 border-2 border-emerald-500/40 rounded-xl p-6 shadow-xl space-y-4">
+            <div className="flex justify-between items-start border-b border-slate-800 pb-4">
+              <div>
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                  Prognóstico Sugerido
+                </span>
+                <h3 className="text-2xl font-black text-white mt-1">
+                  {analysis.prediction}
+                </h3>
+              </div>
+              <div className="text-right">
+                <span className="text-xs text-slate-400">Confiança</span>
+                <div className="text-xl font-bold text-emerald-400">
+                  {analysis.confidence}%
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <h4 className="text-xs font-semibold text-slate-400 uppercase mb-2">
+                Justificativa da IA
+              </h4>
+              <p className="text-sm text-slate-300 leading-relaxed bg-slate-950/60 p-4 rounded-lg border border-slate-800">
+                {analysis.justification}
+              </p>
+            </div>
+
+            {/* Ações de Feedback (Green / Red) */}
+            <div className="pt-4 border-t border-slate-800">
+              <p className="text-xs text-slate-400 mb-3 text-center">
+                O jogo acabou? Qual foi o resultado real desta entrada?
+              </p>
               <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Time Mandante</label>
-                  <input 
-                    type="text" 
-                    placeholder="Ex: Flamengo"
-                    className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-slate-100"
-                    value={formData.homeTeam}
-                    onChange={e => setFormData({...formData, homeTeam: e.target.value})}
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Time Visitante</label>
-                  <input 
-                    type="text" 
-                    placeholder="Ex: Palmeiras"
-                    className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-slate-100"
-                    value={formData.awayTeam}
-                    onChange={e => setFormData({...formData, awayTeam: e.target.value})}
-                    required
-                  />
-                </div>
+                <button
+                  onClick={() => handleFeedback('GREEN')}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-lg transition"
+                >
+                  🟢 GREEN (Acertou)
+                </button>
+                <button
+                  onClick={() => handleFeedback('RED')}
+                  className="bg-rose-600 hover:bg-rose-500 text-white font-bold py-2.5 rounded-lg transition"
+                >
+                  🔴 RED (Errou)
+                </button>
               </div>
-
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Estatísticas do Mandante (Últimos jogos, média de gols)</label>
-                <textarea 
-                  rows={3}
-                  placeholder="Ex: 4V, 1D. Média de 2.1 gols marcados em casa..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-slate-100"
-                  value={formData.homeStats}
-                  onChange={e => setFormData({...formData, homeStats: e.target.value})}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Estatísticas do Visitante</label>
-                <textarea 
-                  rows={3}
-                  placeholder="Ex: Sofreu gols nos últimos 5 jogos fora..."
-                  className="w-full bg-slate-950 border border-slate-800 rounded p-2 text-slate-100"
-                  value={formData.awayStats}
-                  onChange={e => setFormData({...formData, awayStats: e.target.value})}
-                />
-              </div>
-
-              <button 
-                type="submit" 
-                disabled={loading}
-                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 rounded-lg transition"
-              >
-                {loading ? 'Consultando IA & Memória...' : 'Gerar Análise'}
-              </button>
-            </form>
+            </div>
           </section>
-
-          {/* Resultado da Análise */}
-          <section className="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-4">
-            <h2 className="text-xl font-semibold text-slate-200">Prognóstico da IA</h2>
-            {currentAnalysis ? (
-              <div className="space-y-4">
-                <div className="bg-slate-950 p-4 rounded-lg border border-emerald-500/30">
-                  <span className="text-xs text-emerald-400 uppercase font-bold tracking-wider">Mercado Sugerido</span>
-                  <p className="text-2xl font-bold text-white mt-1">{currentAnalysis.prediction.market_suggested}</p>
-                  <p className="text-sm text-slate-400 mt-1">Odd Recomendada: <strong className="text-white">{currentAnalysis.prediction.suggested_odds}</strong></p>
-                  <p className="text-sm text-slate-400">Confiança: <strong className="text-emerald-400">{currentAnalysis.prediction.confidence_score}/5 ⭐</strong></p>
-                </div>
-
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-400 uppercase">Justificativa Técnica</h3>
-                  <p className="text-slate-300 text-sm mt-1 bg-slate-950 p-3 rounded border border-slate-800 leading-relaxed">
-                    {currentAnalysis.prediction.ai_rationale}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="h-64 flex items-center justify-center border border-dashed border-slate-800 rounded-lg text-slate-500">
-                Preencha os dados ao lado para gerar uma análise baseada em aprendizado.
-              </div>
-            )}
-          </section>
-
-        </div>
+        )}
       </div>
     </main>
   );
