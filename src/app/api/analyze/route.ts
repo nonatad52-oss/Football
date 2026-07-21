@@ -3,9 +3,10 @@ import * as cheerio from 'cheerio';
 import Groq from 'groq-sdk';
 import { createClient } from '@supabase/supabase-js';
 
-// Robô de busca atualizado: Usando Google News RSS (oficial, rápido e não bloqueia)
+// Robô de busca avançado focado em estatísticas esportivas (Gols, Cartões, Escanteios, Sofascore/Flashscore)
 async function buscarDadosNaWeb(termo: string) {
   try {
+    // Buscando com foco em estatísticas detalhadas
     const url = `https://news.google.com/rss/search?q=${encodeURIComponent(termo)}&hl=pt-BR&gl=BR&ceid=BR:pt-419`;
     const res = await fetch(url, {
       headers: {
@@ -13,22 +14,25 @@ async function buscarDadosNaWeb(termo: string) {
       }
     });
     
-    if (!res.ok) return "Sem dados recentes disponíveis.";
+    if (!res.ok) return "Sem dados estatísticos disponíveis.";
     
     const xml = await res.text();
-    // Passando o xmlMode para o Cheerio entender o formato do Google
     const $ = cheerio.load(xml, { xmlMode: true });
     
     let resultados = "";
-    // Pega os títulos das 5 notícias mais recentes sobre o time
-    $('item title').each((i, el) => {
-      if (i < 5) resultados += $(el).text() + " | "; 
+    $('item').each((i, el) => {
+      if (i < 6) {
+        const titulo = $(el).find('title').text();
+        const descHtml = $(el).find('description').text();
+        const cleanDesc = cheerio.load(descHtml).text();
+        resultados += `[${titulo} - ${cleanDesc}] `;
+      }
     });
     
-    return resultados || "Nenhuma informação relevante encontrada hoje.";
+    return resultados || "Nenhuma estatística detalhada encontrada.";
   } catch (error) {
-    console.error("Erro na busca do Google News:", error);
-    return "Erro ao buscar dados recentes.";
+    console.error("Erro na busca de estatísticas:", error);
+    return "Erro ao buscar dados estatísticos.";
   }
 }
 
@@ -49,36 +53,35 @@ export async function POST(req: Request) {
     const groq = new Groq({ apiKey: groqApiKey });
     const liga = campeonato || 'Futebol';
 
-    // 1. BUSCA NA WEB (Agora no Google News)
-    const dadosMandante = await buscarDadosNaWeb(`últimas notícias desfalques ${mandante} ${liga}`);
-    const dadosVisitante = await buscarDadosNaWeb(`últimas notícias desfalques ${visitante} ${liga}`);
+    // 1. BUSCA DIRECIONADA A ESTATÍSTICAS (Gols, Cartões, Escanteios e plataformas como SofaScore/Flashscore)
+    const dadosMandante = await buscarDadosNaWeb(`${mandante} estatisticas media gols cartoes escanteios sofascore flashscore`);
+    const dadosVisitante = await buscarDadosNaWeb(`${visitante} estatisticas media gols cartoes escanteios sofascore flashscore`);
 
-    // 2. PROMPT PARA A IA
+    // 2. PROMPT RIGOROSO EXIGINDO DADOS ESTATÍSTICOS PROFISSIONAIS
     const prompt = `
-      Você é o PredictAI, um especialista em análise preditiva de futebol.
-      Analise o confronto: ${mandante} (Mandante) x ${visitante} (Visitante) pelo torneio ${liga}.
+      Você é o PredictAI, um analista estatístico profissional de futebol (tipo especialista de mercado e scout).
+      Analise rigorosamente o confronto: ${mandante} (Mandante) x ${visitante} (Visitante) pelo torneio ${liga}.
       
-      Baseie-se ESTRITAMENTE nestas manchetes reais de hoje extraídas da web:
-      - Manchetes recentes sobre o ${mandante}: ${dadosMandante}
-      - Manchetes recentes sobre o ${visitante}: ${dadosVisitante}
+      ATENÇÃO: Sua análise deve se basear ESTRITAMENTE nos dados estatísticos extraídos da web abaixo (referentes a médias de gols, desempenho, cartões, escanteios e dados de plataformas de scout/estatísticas). Não invente dados.
       
-      Se os dados acima mencionarem desfalques, lesões ou fase atual, use isso na sua análise.
+      - Dados Estatísticos do Mandante (${mandante}): ${dadosMandante}
+      - Dados Estatísticos do Visitante (${visitante}): ${dadosVisitante}
       
-      Responda em 4 tópicos curtos e diretos:
-      1. Momento das Equipes
-      2. Impacto de Desfalques e Notícias Recentes
-      3. Prognóstico Final
-      4. Placar Exato Mais Provável
+      Estruture sua resposta técnica em 4 tópicos detalhados com foco em números:
+      1. Panorama Estatístico e Médias (Analise o comportamento de gols pró/contra, posse ou desempenho recente com base nos dados).
+      2. Disciplina, Cartões e Escanteios (Aponte tendências de cartões amarelos/vermelhos e média de escanteios se encontrados nos relatórios de scout).
+      3. Análise de Jogadores / Desfalques (Destaque atletas importantes ou baixas citadas nos relatórios).
+      4. Prognóstico Técnico e Placar Exato (Fundamente matematicamente a probabilidade de vitória e o placar exato com base nas médias de gols dos times).
     `;
 
     // 3. CHAMADA DA IA
     const chatCompletion = await groq.chat.completions.create({
       messages: [{ role: 'user', content: prompt }],
       model: 'llama-3.1-8b-instant',
-      temperature: 0.3,
+      temperature: 0.2,
     });
 
-    const analiseFinal = chatCompletion.choices[0]?.message?.content || "A IA não conseguiu gerar a análise.";
+    const analiseFinal = chatCompletion.choices[0]?.message?.content || "A IA não conseguiu gerar a análise estatística.";
 
     // 4. SALVAMENTO NO BANCO
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
