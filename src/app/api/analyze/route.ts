@@ -1,106 +1,100 @@
-// src/app/api/analyze/route.ts
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import * as cheerio from 'cheerio';
+import Groq from 'groq-sdk';
+import { createClient } from '@supabase/supabase-js';
 
-export async function POST(request: Request) {
+// Inicializa Groq e Supabase com as chaves da Vercel
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// Robô de busca gratuito usando DuckDuckGo HTML
+async function buscarDadosNaWeb(termo: string) {
   try {
-    const body = await request.json();
-    const { homeTeam, awayTeam, league, matchDate, homeStats, awayStats, odds } = body;
-
-    if (!homeTeam || !awayTeam || !league) {
-      return NextResponse.json({ error: 'Dados incompletos da partida.' }, { status: 400 });
-    }
-
-    // -------------------------------------------------------------
-    // 🧠 PASSO DE APRENDIZADO: Buscar histórico recente no Supabase
-    // -------------------------------------------------------------
-    const { data: pastResults } = await supabase
-      .from('results')
-      .select(`
-        bet_won,
-        learning_notes,
-        matches ( home_team, away_team, league ),
-        predictions ( market_suggested, ai_rationale )
-      `)
-      .order('updated_at', { ascending: false })
-      .limit(10); // Pega as últimas 10 análises resolvidas
-
-    // Formata o histórico em texto legível para a IA
-    let memoryContext = "HISTÓRICO DE APRENDIZADO DE ANÁLISES ANTERIORES:\n";
-    if (pastResults && pastResults.length > 0) {
-      pastResults.forEach((item: any) => {
-        const resultText = item.bet_won ? 'GREEN (Acerto)' : 'RED (Erro)';
-        memoryContext += `- [${resultText}] Jogo: ${item.matches.home_team} x ${item.matches.away_team} (${item.matches.league}) | Mercado Sugerido: ${item.predictions.market_suggested} | Nota de Aprendizado: ${item.learning_notes || 'Sem observações'}\n`;
-      });
-    } else {
-      memoryContext += "Ainda não há histórico acumulado de apostas passadas.\n";
-    }
-
-    // -------------------------------------------------------------
-    // 📝 ENGENHARIA DE PROMPT COM MEMÓRIA DE APRENDIZADO
-    // -------------------------------------------------------------
-    const prompt = `
-      Você é um analista profissional de apostas esportivas e estatísticas de futebol de elite.
-      Analise a partida abaixo com base nos dados fornecidos e LEVE EM CONSIDERAÇÃO SEUS ERROS E ACERTOS PASSADOS.
-
-      ${memoryContext}
-
-      PARTIDA ATUAL PARA ANALISAR:
-      Confronto: ${homeTeam} x ${awayTeam} (${league})
-      Estatísticas do Mandante (Casa): ${homeStats}
-      Estatísticas do Visitante (Fora): ${awayStats}
-      Odds Atuais do Mercado: ${odds}
-
-      DIRETRIZES DE APRENDIZADO:
-      - Evite repetir padrões de análise que causaram resultados RED no histórico.
-      - Se a liga/contexto for parecido com um erro recente, seja mais conservador na confiança.
-
-      Retorne sua resposta estritamente no formato JSON puro:
-      {
-        "market_suggested": "Mercado recomendado",
-        "suggested_odds": 1.85,
-        "confidence_score": 4,
-        "ai_rationale": "Explicação técnica detalhada justificando a escolha"
+    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(termo)}`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       }
+    });
+    
+    if (!res.ok) return "Sem dados recentes disponíveis.";
+    
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    
+    let resultados = "";
+    $('.result__snippet').each((i, el) => {
+      if (i < 4) resultados += $(el).text() + " | "; 
+    });
+    
+    return resultados || "Nenhuma informação relevante encontrada hoje.";
+  } catch (error) {
+    console.error("Erro na busca:", error);
+    return "Erro ao buscar dados recentes.";
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+    const { mandante, visitante, campeonato } = body;
+
+    if (!mandante || !visitante) {
+      return NextResponse.json({ error: 'Times são obrigatórios.' }, { status: 400 });
+    }
+
+    const liga = campeonato || 'Futebol';
+
+    // 1. O robô faz as buscas invisíveis
+    const dadosMandante = await buscarDadosNaWeb(`notícias recentes últimos jogos desfalques ${mandante} ${liga}`);
+    const dadosVisitante = await buscarDadosNaWeb(`notícias recentes últimos jogos desfalques ${visitante} ${liga}`);
+
+    // 2. Prepara o cérebro da IA
+    const prompt = `
+      Você é o PredictAI, um especialista em análise preditiva de futebol.
+      Sua missão é analisar o confronto entre: ${mandante} (Mandante) x ${visitante} (Visitante) pelo torneio ${liga}.
+      
+      Você deve basear sua análise EXCLUSIVAMENTE nas informações atualizadas coletadas da web hoje:
+      - Dados recentes do Mandante (${mandante}): ${dadosMandante}
+      - Dados recentes do Visitante (${visitante}): ${dadosVisitante}
+      
+      Formate sua resposta de forma clara:
+      1. Resumo do Momento das Equipes (quem chega melhor, baseando-se nos dados acima).
+      2. Impacto de Desfalques ou Notícias (se houver menção nos dados).
+      3. Prognóstico Final (Quem tem maior probabilidade de vencer ou se é empate).
+      4. Placar Exato Mais Provável.
+      
+      Seja direto, profissional e não invente estatísticas antigas.
     `;
 
-    // Chamada fictícia do cliente da sua IA (Substitua pela chamada real do seu SDK de IA)
-    // const aiResponse = await aiClient.generate({ prompt });
-    // const analysis = JSON.parse(aiResponse);
+    // 3. Pede para o Groq gerar a resposta
+    const chatCompletion = await groq.chat.completions.create({
+      messages: [{ role: 'user', content: prompt }],
+      model: 'llama3-8b-8192', // Ou o modelo Groq da sua preferência (ex: mixtral-8x7b-32768)
+      temperature: 0.3, // Menos "criativo", mais focado em dados lógicos
+    });
 
-    // Simulação do retorno da IA
-    const analysis = {
-      market_suggested: "Over 2.5 Gols",
-      suggested_odds: parseFloat(odds?.over25 || 1.85),
-      confidence_score: 4,
-      ai_rationale: `Análise considerando estatísticas recentes do ${homeTeam} e ${awayTeam}. Levando em conta o aprendizado acumulado, evitou-se mercados com baixa liquidez.`
-    };
+    const analiseFinal = chatCompletion.choices[0]?.message?.content || "Erro ao processar análise.";
 
-    // Salva a Partida no Supabase
-    const { data: matchData, error: matchError } = await supabase
-      .from('matches')
-      .insert([{ home_team: homeTeam, away_team: awayTeam, league, match_date: matchDate || new Date().toISOString() }])
-      .select().single();
+    // 4. Salva no banco de dados Supabase (Opcional, mas mantém seu histórico!)
+    if (supabaseUrl && supabaseKey) {
+      await supabase.from('analises').insert([
+        { 
+          mandante, 
+          visitante, 
+          campeonato: liga, 
+          resultado_ia: analiseFinal 
+        }
+      ]).select();
+    }
 
-    if (matchError) throw matchError;
-
-    // Salva a Previsão no Supabase
-    const { data: predictionData, error: predError } = await supabase
-      .from('predictions')
-      .insert([{
-        match_id: matchData.id,
-        market_suggested: analysis.market_suggested,
-        suggested_odds: analysis.suggested_odds,
-        confidence_score: analysis.confidence_score,
-        ai_rationale: analysis.ai_rationale
-      }])
-      .select().single();
-
-    if (predError) throw predError;
-
-    return NextResponse.json({ success: true, match: matchData, prediction: predictionData });
+    // 5. Devolve para a tela do usuário
+    return NextResponse.json({ analise: analiseFinal });
 
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    console.error("Erro na API:", error);
+    return NextResponse.json({ error: 'Erro interno no servidor de análise.' }, { status: 500 });
   }
 }
