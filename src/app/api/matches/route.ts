@@ -5,28 +5,29 @@ export async function GET(req: Request) {
   const league = searchParams.get('league') || 'bra.1';
 
   try {
-    // 1. Define a busca de HOJE até os próximos 7 DIAS
-    const hoje = new Date();
-    const dataFinal = new Date(); 
-    dataFinal.setDate(hoje.getDate() + 7);
+    // 1. Ampliando a busca: de ONTEM até os próximos 10 DIAS (evita o bug de fuso horário UTC vs Brasília)
+    const dataInicial = new Date();
+    dataInicial.setDate(dataInicial.getDate() - 1); 
     
-    // Formata no padrão YYYYMMDD exigido pela ESPN
+    const dataFinal = new Date(); 
+    dataFinal.setDate(dataFinal.getDate() + 10);
+    
     const formataData = (d: Date) => d.toISOString().split('T')[0].replace(/-/g, '');
-    const rangeDatas = `${formataData(hoje)}-${formataData(dataFinal)}`;
+    const rangeDatas = `${formataData(dataInicial)}-${formataData(dataFinal)}`;
 
-    // 2. Busca na ESPN usando a janela de 7 dias futuros
+    // 2. Busca na ESPN
     const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/${league}/scoreboard?dates=${rangeDatas}`;
     
     const res = await fetch(url, { cache: 'no-store' });
     if (!res.ok) throw new Error('Falha ao buscar jogos');
     const data = await res.json();
 
-    // 3. Organiza os dados e aplica o FILTRO DE JOGOS FUTUROS
+    // 3. Filtra apenas os jogos que AINDA VÃO ACONTECER e organiza as datas
     const matches = (data.events || [])
       .filter((event: any) => {
-        // FILTRO MÁGICO: Só permite passar jogos com status 'pre' (agendados)
-        // Ignora sumariamente 'in' (ao vivo) e 'post' (encerrados)
-        return event.status?.type?.state === 'pre';
+        const state = event.status?.type?.state;
+        // Pega apenas jogos pré-jogo ('pre') ou agendados ('scheduled')
+        return state === 'pre' || state === 'scheduled';
       })
       .map((event: any) => {
         const comp = event.competitions?.[0];
@@ -42,9 +43,13 @@ export async function GET(req: Request) {
           home,
           away,
           date: `${day} às ${time}`,
-          status: event.status?.type?.shortDetail || 'Agendado'
+          status: event.status?.type?.shortDetail || 'Agendado',
+          timestamp: dateObj.getTime() // Usado para ordenar
         };
       });
+
+    // 4. Ordena cronologicamente: do jogo mais perto de acontecer para o mais longe
+    matches.sort((a: any, b: any) => a.timestamp - b.timestamp);
 
     return NextResponse.json({ matches });
   } catch (error) {
